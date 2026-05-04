@@ -695,59 +695,84 @@ class AppServices {
     }
 
     async pollAssignment(input, context) {
-        const ticketId = context.item.data.ticketId;
+    const ticketId = context.item.data.ticketId;
 
-        if (!ticketId) {
-            return { error: "ID de ticket manquant" };
+    if (!ticketId) {
+        return { error: "ID de ticket manquant" };
+    }
+
+    const appToken = process.env.ITSM_APP_TOKEN;
+    const ticketUsersUrl = `${process.env.ITSM_HOST}${process.env.ITSM_URI}/apirest.php/Ticket/${ticketId}/Ticket_User`;
+
+    const maxAttempts = 10000;
+    const interval = 10000;
+    let attempts = 0;
+
+    // Ouvrir une seule session pour tout le polling
+    let headers = null;
+    try {
+        const sessionResponse = await axios.get(`${process.env.ITSM_HOST}${process.env.ITSM_URI}/apirest.php/initSession`, {
+            headers: {
+                "Content-Type": "application/json",
+                "Authorization": "user_token " + process.env.ITSM_USER_TOKEN,
+                "App-Token": appToken,
+            }
+        });
+
+        if (!sessionResponse.data.session_token) {
+            return { error: "Échec de récupération du token de session" };
         }
 
-        const appToken = process.env.ITSM_APP_TOKEN;
-        const ticketUsersUrl = `${process.env.ITSM_HOST}${process.env.ITSM_URI}/apirest.php/Ticket/${ticketId}/Ticket_User`;
+        headers = {
+            "Content-Type": "application/json",
+            "Session-Token": sessionResponse.data.session_token,
+            "App-Token": appToken,
+        };
+    } catch (error) {
+        return { error: "Erreur initSession: " + error.message };
+    }
 
-        const maxAttempts = 10000;
-        const interval = 5000;
-        let attempts = 0;
+    while (attempts < maxAttempts) {
+        try {
+            const usersResponse = await axios.get(ticketUsersUrl, { headers });
 
-        while (attempts < maxAttempts) {
-            try {
-                const sessionResponse = await axios.get(`${process.env.ITSM_HOST}${process.env.ITSM_URI}/apirest.php/initSession`, {
-                    headers: {
-                        "Content-Type": "application/json",
-                        "Authorization": "user_token " + process.env.ITSM_USER_TOKEN,
-                        "App-Token": appToken,
-                    }
-                });
+            if (usersResponse.status === 200 && Array.isArray(usersResponse.data)) {
+                const assignedTech = usersResponse.data.find(a => a.type === 2);
 
-                if (sessionResponse.status === 200 && sessionResponse.data.session_token) {
-                    const headers = {
-                        "Content-Type": "application/json",
-                        "Session-Token": sessionResponse.data.session_token,
-                        "App-Token": appToken,
-                    };
-
-                    const usersResponse = await axios.get(ticketUsersUrl, { headers });
-
-                    if (usersResponse.status === 200 && Array.isArray(usersResponse.data)) {
-                        const assignedTech = usersResponse.data.find(a => a.type === 2);
-
-                        if (assignedTech) {
-                            console.log("Tech assigné trouvé:", assignedTech.users_id);
-                            context.item.data.assignedTechId = assignedTech.users_id;
-                            return { success: true, assignedTechId: assignedTech.users_id };
-                        }
-                    }
+                if (assignedTech) {
+                    console.log("Tech assigné trouvé:", assignedTech.users_id);
+                    context.item.data.assignedTechId = assignedTech.users_id;
+                    return { success: true, assignedTechId: assignedTech.users_id };
                 }
-            } catch (error) {
+            }
+        } catch (error) {
+            // Si erreur 401, renouveler la session
+            if (error.response && error.response.status === 401) {
+                console.log("Session expirée, renouvellement...");
+                try {
+                    const sessionResponse = await axios.get(`${process.env.ITSM_HOST}${process.env.ITSM_URI}/apirest.php/initSession`, {
+                        headers: {
+                            "Content-Type": "application/json",
+                            "Authorization": "user_token " + process.env.ITSM_USER_TOKEN,
+                            "App-Token": appToken,
+                        }
+                    });
+                    headers["Session-Token"] = sessionResponse.data.session_token;
+                } catch (renewError) {
+                    console.error("Erreur renouvellement session:", renewError.message);
+                }
+            } else {
                 console.error("Erreur pollAssignment:", error.message);
             }
-
-            attempts++;
-            console.log(`pollAssignment: tentative ${attempts}, pas encore assigné...`);
-            await new Promise(resolve => setTimeout(resolve, interval));
         }
 
-        return { error: "Timeout: aucun tech assigné", success: false };
+        attempts++;
+        console.log(`pollAssignment: tentative ${attempts}, pas encore assigné...`);
+        await new Promise(resolve => setTimeout(resolve, interval));
     }
+
+    return { error: "Timeout: aucun tech assigné", success: false };
+	}
 
     async updateTicket(input, context) {
         try {
