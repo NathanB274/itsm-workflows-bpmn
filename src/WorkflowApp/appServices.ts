@@ -406,61 +406,6 @@ class AppServices {
                                     const ticketUsersUrl = `${process.env.ITSM_HOST}${process.env.ITSM_URI}/apirest.php/Ticket/${ticketId}/Ticket_User`;
                                     const existingAssignments = await axios.get(ticketUsersUrl, { headers });
 
-                                    //  Supprimer toutes les assignations de type 2 (assigné) existantes et les mettre en observateurs
-                                    if (existingAssignments.data && Array.isArray(existingAssignments.data)) {
-                                        for (const assignment of existingAssignments.data) {
-                                            if (assignment.type === 2 && assignment.users_id != approvalUserId) {
-                                                // Supprimer l'ancienne assignation
-                                                try {
-                                                    const deleteUrl = `${process.env.ITSM_HOST}${process.env.ITSM_URI}/apirest.php/Ticket_User/`;
-                                                    await axios.delete(deleteUrl, {
-                                                        headers,
-                                                        data: { input: { id: assignment.id }, force_purge: true }
-                                                    });
-                                                    console.log(`Ancienne assignation supprimée pour l'utilisateur ${assignment.users_id}`);
-
-                                                    // Ajouter comme observateur
-                                                    const observerPayload = {
-                                                        input: {
-                                                            tickets_id: ticketId,
-                                                            users_id: assignment.users_id,
-                                                            type: 3 // Observateur
-                                                        }
-                                                    };
-                                                    await axios.post(`${process.env.ITSM_HOST}${process.env.ITSM_URI}/apirest.php/Ticket_User/`, observerPayload, { headers });
-                                                    console.log(`Utilisateur ${assignment.users_id} mis en observateur`);
-                                                } catch (deleteError) {
-                                                    console.error(`Erreur lors de la suppression de l'assignation:`, deleteError.message);
-                                                }
-                                            }
-                                        }
-                                    }
-
-                                    // Supprimer toutes les assignations de groupe de type 2
-                                    const ticketGroupsUrl = `${process.env.ITSM_HOST}${process.env.ITSM_URI}/apirest.php/Ticket/${ticketId}/Group_Ticket`;
-                                    try {
-                                        const existingGroupAssignments = await axios.get(ticketGroupsUrl, { headers });
-
-                                        if (existingGroupAssignments.data && Array.isArray(existingGroupAssignments.data)) {
-                                            for (const groupAssignment of existingGroupAssignments.data) {
-                                                if (groupAssignment.type === 2) {
-                                                    try {
-                                                        const deleteGroupUrl = `${process.env.ITSM_HOST}${process.env.ITSM_URI}/apirest.php/Group_Ticket/`;
-                                                        await axios.delete(deleteGroupUrl, {
-                                                            headers,
-                                                            data: { input: { id: groupAssignment.id }, force_purge: true }
-                                                        });
-                                                        console.log(`Assignation de groupe ${groupAssignment.groups_id} supprimée`);
-                                                    } catch (deleteGroupError) {
-                                                        console.error(`Erreur lors de la suppression de l'assignation de groupe:`, deleteGroupError.message);
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    } catch (groupError) {
-                                        console.error(`Erreur lors de la récupération des groupes assignés:`, groupError.message);
-                                    }
-
                                     // Vérifier si l'utilisateur qui a validé est déjà assigné
                                     const isAlreadyAssigned = existingAssignments.data && Array.isArray(existingAssignments.data) ?
                                         existingAssignments.data.some(a => a.users_id == approvalUserId && a.type === 2) : false;
@@ -679,6 +624,7 @@ class AppServices {
 
                 if (taskResponse.status === 201) {
                     console.log("Tâche ajoutée avec succès, ID:", taskResponse.data.id);
+                    context.item.data.lastTaskId = taskResponse.data.id;
                     return { success: true, taskId: taskResponse.data.id };
                 } else {
                     return { error: "Échec d'ajout de tâche", details: taskResponse.data };
@@ -772,7 +718,86 @@ class AppServices {
     }
 
     return { error: "Timeout: aucun tech assigné", success: false };
-	}
+        }
+
+
+    async pollTaskCompletion(input, context) {
+        const taskId = input.taskId || context.item.data.lastTaskId;
+
+        if (!taskId) {
+            return { error: "ID de tâche manquant" };
+        }
+
+        const appToken = process.env.ITSM_APP_TOKEN;
+        const maxAttempts = 10000;
+        const interval = 10000;
+        let attempts = 0;
+
+        let headers = null;
+        try {
+            const sessionResponse = await axios.get(`${process.env.ITSM_HOST}${process.env.ITSM_URI}/apirest.php/initSession`, {
+                headers: {
+                    "Content-Type": "application/json",
+                    "Authorization": "user_token " + process.env.ITSM_USER_TOKEN,
+                    "App-Token": appToken,
+                }
+            });
+
+            if (!sessionResponse.data.session_token) {
+                return { error: "Échec de récupération du token de session" };
+            }
+
+            headers = {
+                "Content-Type": "application/json",
+                "Session-Token": sessionResponse.data.session_token,
+                "App-Token": appToken,
+            };
+        } catch (error) {
+            return { error: "Erreur initSession: " + error.message };
+        }
+
+        while (attempts < maxAttempts) {
+            try {
+                const taskResponse = await axios.get(
+                    `${process.env.ITSM_HOST}${process.env.ITSM_URI}/apirest.php/TicketTask/${taskId}`,
+                    { headers }
+                );
+
+                if (taskResponse.status === 200 && taskResponse.data) {
+                    const state = taskResponse.data.state;
+                    console.log(`pollTaskCompletion: tâche ${taskId} state=${state}`);
+
+                    if (state === 2) {
+                        console.log(`Tâche ${taskId} terminée`);
+                        return { success: true, taskId, completed: true };
+                    }
+                }
+            } catch (error) {
+                if (error.response && error.response.status === 401) {
+                    try {
+                        const sessionResponse = await axios.get(`${process.env.ITSM_HOST}${process.env.ITSM_URI}/apirest.php/initSession`, {
+                            headers: {
+                                "Content-Type": "application/json",
+                                "Authorization": "user_token " + process.env.ITSM_USER_TOKEN,
+                                "App-Token": appToken,
+                            }
+                        });
+                        headers["Session-Token"] = sessionResponse.data.session_token;
+                    } catch (renewError) {
+                        console.error("Erreur renouvellement session:", renewError.message);
+                    }
+                } else {
+                    console.error("Erreur pollTaskCompletion:", error.message);
+                }
+            }
+
+            attempts++;
+            console.log(`pollTaskCompletion: tentative ${attempts}, tâche pas encore terminée...`);
+            await new Promise(resolve => setTimeout(resolve, interval));
+        }
+
+        return { error: "Timeout: tâche non terminée", success: false };
+    }
 
     async updateTicket(input, context) {
         try {
@@ -880,6 +905,27 @@ class AppServices {
                 }
             }
 
+            // Assigner le groupe si nécessaire
+            if (currentGroupId) {
+                const isGroupAlreadyAssigned = existingGroupAssignments.data && Array.isArray(existingGroupAssignments.data) ?
+                    existingGroupAssignments.data.some(a => a.groups_id == currentGroupId && a.type === 2) : false;
+                if (!isGroupAlreadyAssigned) {
+                    try {
+                        const groupAssignPayload = {
+                            input: {
+                                tickets_id: ticketId,
+                                groups_id: currentGroupId,
+                                type: 2
+                            }
+                        };
+                        const groupAssignUrl = `${process.env.ITSM_HOST}${process.env.ITSM_URI}/apirest.php/Group_Ticket/`;
+                        await axios.post(groupAssignUrl, groupAssignPayload, { headers });
+                        console.log(`Groupe ${currentGroupId} assigné au ticket ${ticketId}`);
+                    } catch (groupAssignError) {
+                        console.error("Erreur lors de l'assignation du groupe:", groupAssignError.message);
+                    }
+                }
+            }
             // Assigner le nouvel utilisateur si nécessaire
             if (currentUserId) {
                 const isAlreadyAssigned = existingAssignments.data && Array.isArray(existingAssignments.data) ?
@@ -1001,12 +1047,42 @@ class AppServices {
                 }
             }
 
-            console.log("Fin de la tâche de mise à jour du ticket");
-
+            // Résoudre email manager et mettre à jour le demandeur
+            if (input.ticketUpdate.manager_email) {
+                try {
+                    const userSearchUrl = `${process.env.ITSM_HOST}${process.env.ITSM_URI}/apirest.php/UserEmail`;
+                    const userSearchResponse = await axios.get(userSearchUrl, {
+                        headers,
+                        params: { "searchText[email]": input.ticketUpdate.manager_email, "range": "0-1" }
+                    });
+                    if (userSearchResponse.data && userSearchResponse.data.length > 0) {
+                        const managerId = userSearchResponse.data[0].users_id;
+                        const ticketUsersUrl = `${process.env.ITSM_HOST}${process.env.ITSM_URI}/apirest.php/Ticket/${ticketId}/Ticket_User`;
+                        const currentRequesters = await axios.get(ticketUsersUrl, { headers });
+                        if (currentRequesters.data && Array.isArray(currentRequesters.data)) {
+                            for (const requester of currentRequesters.data.filter(u => u.type === 1)) {
+                                await axios.delete(`${process.env.ITSM_HOST}${process.env.ITSM_URI}/apirest.php/Ticket_User/`, {
+                                    headers,
+                                    data: { input: { id: requester.id }, force_purge: true }
+                                });
+                            }
+                        }
+                        await axios.post(`${process.env.ITSM_HOST}${process.env.ITSM_URI}/apirest.php/Ticket_User/`, {
+                            input: { tickets_id: ticketId, users_id: managerId, type: 1 }
+                        }, { headers });
+                        console.log(`Demandeur mis à jour avec manager: ${managerId}`);
+                    } else {
+                        console.log(`Manager non trouvé pour email: ${input.ticketUpdate.manager_email}`);
+                    }
+                } catch (requesterError) {
+                    console.error("Erreur résolution manager:", requesterError.message);
+                }
+            }
             // Stockage de l'ID du ticket pour les tâches suivantes
             if (context && context.item && context.item.data) {
                 context.item.data.ticketId = ticketId;
             }
+            console.log("Fin de la tâche de mise à jour du ticket");
 
             return { ticketId };
         } catch (error) {
@@ -1461,5 +1537,58 @@ class AppServices {
 
         return htmlParts.join('\n');
     }
+        async resolveUserByEmail(input, context) {
+                        const appToken = process.env.ITSM_APP_TOKEN;
+                        const email = input.email || context.item.data[input.emailField];
+
+                        if (!email) {
+                                console.error("resolveUserByEmail: aucun email fourni");
+                                return { error: "Email manquant" };
+                        }
+
+                        try {
+                                const sessionResponse = await axios.get(`${process.env.ITSM_HOST}${process.env.ITSM_URI}/apirest.php/initSession`, {
+                                        headers: {
+                                                "Content-Type": "application/json",
+                                                "Authorization": "user_token " + process.env.ITSM_USER_TOKEN,
+                                                "App-Token": appToken,
+                                        }
+                                });
+
+                                const sessionToken = sessionResponse.data.session_token;
+                                const headers = {
+                                        "Content-Type": "application/json",
+                                        "Session-Token": sessionToken,
+                                        "App-Token": appToken,
+                                };
+
+                                await axios.post(`${process.env.ITSM_HOST}${process.env.ITSM_URI}/apirest.php/changeActiveProfile/`,
+                                        { profiles_id: 4 }, { headers });
+
+                                const response = await axios.get(
+                                        `${process.env.ITSM_HOST}${process.env.ITSM_URI}/apirest.php/User`,
+                                        {
+                                                headers,
+                                                params: { "searchText[email]": email, "range": "0-1" }
+                                        }
+                                );
+
+                                if (!response.data || response.data.length === 0) {
+                                        console.error(`resolveUserByEmail: aucun utilisateur trouvé pour ${email}`);
+                                        return { error: "Utilisateur non trouvé", email };
+                                }
+
+                                const userId = response.data[0].id;
+                                const storeAs = input.storeAs || "resolvedUserId";
+                                context.item.data[storeAs] = userId;
+
+                                console.log(`resolveUserByEmail: ${email} → users_id ${userId} stocké dans data.${storeAs}`);
+                                return { success: true, userId, email };
+
+                        } catch (error) {
+                                console.error("resolveUserByEmail erreur:", error.message);
+                                return { error: error.message };
+                        }
+                }
 }
 export { AppServices }
