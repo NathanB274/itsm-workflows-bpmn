@@ -1078,6 +1078,20 @@ class AppServices {
                     console.error("Erreur résolution manager:", requesterError.message);
                 }
             }
+            // Mettre à jour le statut si spécifié
+            if (input.ticketUpdate.status) {
+                try {
+                    await axios.put(`${process.env.ITSM_HOST}${process.env.ITSM_URI}/apirest.php/Ticket/${ticketId}`, {
+                        input: {
+                            status: input.ticketUpdate.status,
+                            ...(input.ticketUpdate.global_validation !== undefined && { global_validation: input.ticketUpdate.global_validation })
+                        }
+                    }, { headers });
+                    console.log(`Statut ticket mis à jour: ${input.ticketUpdate.status}`);
+                } catch (statusError) {
+                    console.error("Erreur mise à jour statut:", statusError.message);
+                }
+            }
             // Stockage de l'ID du ticket pour les tâches suivantes
             if (context && context.item && context.item.data) {
                 context.item.data.ticketId = ticketId;
