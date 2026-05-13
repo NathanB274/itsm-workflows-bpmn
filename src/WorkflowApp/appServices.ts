@@ -95,7 +95,6 @@ class AppServices {
                             appToken
                         );
                         if (formattedContent) {
-                            // Remplacer le placeholder (tolère 1 ou 2 # de chaque côté à cause du parsing XML)
                             processedDescription = ticketContent.description.replace(/#{1,2}fullform#{1,2}/gi, formattedContent);
                             console.log("Contenu du formulaire généré avec succès");
                         }
@@ -144,7 +143,6 @@ class AppServices {
 
                             if (existingAssignments.data && Array.isArray(existingAssignments.data)) {
                                 for (const assignment of existingAssignments.data) {
-                                    // Supprimer les assignations de type 2 (assigné) sauf si explicitement demandé
                                     if (assignment.type === 2 && !ticketContent.users_id_assign) {
                                         const deleteUrl = `${process.env.ITSM_HOST}${process.env.ITSM_URI}/apirest.php/Ticket_User/`;
                                         await axios.delete(deleteUrl, {
@@ -181,7 +179,6 @@ class AppServices {
                                         users_id_assign: ticketContent.users_id_assign
                                     }
                                 };
-
                                 await axios.put(updateUrl, updatePayload, { headers });
                             } catch (updateError) {
                                 console.error("Erreur lors de la mise à jour de l'assignation");
@@ -194,11 +191,9 @@ class AppServices {
                         const validationUrl = `${process.env.ITSM_HOST}${process.env.ITSM_URI}/apirest.php/TicketValidation/`;
                         const validationInput = context.item.data.ticketValidation.input;
 
-                        // Si un groupe est assigné au ticket, récupérer tous les membres et créer une validation pour chacun
                         if (ticketContent.groups_id_assign) {
                             console.log(`Groupe assigné: ${ticketContent.groups_id_assign}. Récupération des membres...`);
 
-                            // Récupération des membres du groupe via l'API GLPI
                             let groupMembers = [];
                             try {
                                 const groupUsersUrl = `${process.env.ITSM_HOST}${process.env.ITSM_URI}/apirest.php/Group/${ticketContent.groups_id_assign}/Group_User/`;
@@ -217,7 +212,6 @@ class AppServices {
                             if (groupMembers.length > 0) {
                                 console.log(`Création de ${groupMembers.length} demandes de validation pour les membres du groupe`);
 
-                                // Créer une demande de validation pour chaque membre du groupe
                                 for (const userId of groupMembers) {
                                     const validationPayload = {
                                         input: {
@@ -239,7 +233,6 @@ class AppServices {
                                 console.log("Aucun membre trouvé dans le groupe, pas de validation créée");
                             }
                         } else {
-                            // Comportement classique: validation par utilisateur ou groupe unique
                             const validationPayload = {
                                 input: {
                                     tickets_id: createdTicketId,
@@ -261,7 +254,6 @@ class AppServices {
                                             users_id_validate: validationInput.users_id_validate
                                         }
                                     };
-
                                     await axios.put(updateUrl, updatePayload, { headers });
                                 } catch (updateError) {
                                     console.error("Erreur lors de la mise à jour du ticket");
@@ -343,7 +335,6 @@ class AppServices {
             const interval = 5000;
             const maxAttempts = 10000;
 
-            // Suivre les validations déjà vues
             if (!context.item.data.seenValidations) {
                 context.item.data.seenValidations = [];
             }
@@ -357,7 +348,6 @@ class AppServices {
                         const ticket = ticketResponse.data;
 
                         if (ticket.id && ticket.id == ticketId) {
-                            // Vérifier si le ticket est clos
                             if (ticket.status === 6) {
                                 context.item.data.ticket_closed = true;
                                 return { validated: true, ticket_closed: true };
@@ -366,7 +356,6 @@ class AppServices {
                             const globalValidationStatus = ticket.global_validation;
                             console.log(`Ticket ${ticketId}, Validation globale = ${globalValidationStatus}`);
 
-                            // Vérifier les validations individuelles refusées ou acceptées
                             let hasNewRejection = false;
                             let rejectionUserName = "";
                             let hasNewApproval = false;
@@ -376,13 +365,13 @@ class AppServices {
                                 for (const validation of validationsResponse.data) {
                                     const alreadySeen = context.item.data.seenValidations.includes(validation.id);
 
-                                    if (validation.status === 4 && !alreadySeen) { // 4 = Refusé
+                                    if (validation.status === 4 && !alreadySeen) {
                                         hasNewRejection = true;
                                         rejectionUserName = validation.users_id_validate;
                                         context.item.data.seenValidations.push(validation.id);
                                         context.item.data.rejectedBy = validation.users_id_validate;
                                         break;
-                                    } else if (validation.status === 3 && !alreadySeen) { // 3 = Accepté
+                                    } else if (validation.status === 3 && !alreadySeen) {
                                         hasNewApproval = true;
                                         approvalUserId = validation.users_id_validate;
                                         context.item.data.seenValidations.push(validation.id);
@@ -398,25 +387,21 @@ class AppServices {
                                 context.item.data.ticket_closed = false;
                                 return { validated: false, ticket_closed: false, rejectedBy: rejectionUserName };
                             } else if (hasNewApproval && approvalUserId) {
-                                // Assigner automatiquement l'utilisateur qui a validé au ticket
                                 console.log(`Assignation automatique du ticket à l'utilisateur ${approvalUserId} qui a validé`);
 
                                 try {
-                                    //  Récupérer les assignations existantes
                                     const ticketUsersUrl = `${process.env.ITSM_HOST}${process.env.ITSM_URI}/apirest.php/Ticket/${ticketId}/Ticket_User`;
                                     const existingAssignments = await axios.get(ticketUsersUrl, { headers });
 
-                                    // Vérifier si l'utilisateur qui a validé est déjà assigné
                                     const isAlreadyAssigned = existingAssignments.data && Array.isArray(existingAssignments.data) ?
                                         existingAssignments.data.some(a => a.users_id == approvalUserId && a.type === 2) : false;
 
                                     if (!isAlreadyAssigned) {
-                                        // Assigner l'utilisateur qui a validé
                                         const assignPayload = {
                                             input: {
                                                 tickets_id: ticketId,
                                                 users_id: approvalUserId,
-                                                type: 2 // Assigné
+                                                type: 2
                                             }
                                         };
 
@@ -424,7 +409,6 @@ class AppServices {
                                         await axios.post(assignUrl, assignPayload, { headers });
                                         console.log(`Utilisateur ${approvalUserId} assigné au ticket ${ticketId} avec succès`);
 
-                                        //Mettre à jour le ticket lui-même pour s'assurer que users_id_assign est correct
                                         const updateTicketUrl = `${process.env.ITSM_HOST}${process.env.ITSM_URI}/apirest.php/Ticket/${ticketId}`;
                                         const updateTicketPayload = {
                                             input: {
@@ -440,7 +424,6 @@ class AppServices {
                                     console.error(`Erreur lors de l'assignation de l'utilisateur ${approvalUserId}:`, assignError.message);
                                 }
 
-                                // Attendre que le global_validation devienne 3 pour confirmer
                                 context.item.data.ticketValidated = true;
                                 context.item.data.ticket_closed = false;
                                 return { validated: true, ticket_closed: false, assignedTo: approvalUserId };
@@ -490,7 +473,6 @@ class AppServices {
 
         let followupContent = "Ticket clos, fin du processus";
 
-        // Définir le contenu du followup
         if (input.followupData && input.followupData.content) {
             followupContent = input.followupData.content;
         } else if (context.item.data.followup && context.item.data.followup.content) {
@@ -519,7 +501,6 @@ class AppServices {
                     "Pragma": "no-cache"
                 };
 
-                // Passer en profil superadmin
                 const getActiveProfileUrl = `${process.env.ITSM_HOST}${process.env.ITSM_URI}/apirest.php/getActiveProfile/`;
                 const profileResponse = await axios.get(getActiveProfileUrl, { headers });
 
@@ -528,7 +509,6 @@ class AppServices {
                     await axios.post(changeProfileUrl, { profiles_id: 4 }, { headers });
                 }
 
-                // Création du followup
                 const followupPayload = {
                     input: {
                         itemtype: "Ticket",
@@ -597,7 +577,6 @@ class AppServices {
                     "Pragma": "no-cache"
                 };
 
-                // Passer en profil superadmin
                 const getActiveProfileUrl = `${process.env.ITSM_HOST}${process.env.ITSM_URI}/apirest.php/getActiveProfile/`;
                 const profileResponse = await axios.get(getActiveProfileUrl, { headers });
 
@@ -606,7 +585,6 @@ class AppServices {
                     await axios.post(changeProfileUrl, { profiles_id: 4 }, { headers });
                 }
 
-                // Création de la tâche
                 const taskPayload = {
                     input: {
                         tickets_id: ticketId,
@@ -641,85 +619,81 @@ class AppServices {
     }
 
     async pollAssignment(input, context) {
-    const ticketId = context.item.data.ticketId;
+        const ticketId = context.item.data.ticketId;
 
-    if (!ticketId) {
-        return { error: "ID de ticket manquant" };
-    }
-
-    const appToken = process.env.ITSM_APP_TOKEN;
-    const ticketUsersUrl = `${process.env.ITSM_HOST}${process.env.ITSM_URI}/apirest.php/Ticket/${ticketId}/Ticket_User`;
-
-    const maxAttempts = 10000;
-    const interval = 10000;
-    let attempts = 0;
-
-    // Ouvrir une seule session pour tout le polling
-    let headers = null;
-    try {
-        const sessionResponse = await axios.get(`${process.env.ITSM_HOST}${process.env.ITSM_URI}/apirest.php/initSession`, {
-            headers: {
-                "Content-Type": "application/json",
-                "Authorization": "user_token " + process.env.ITSM_USER_TOKEN,
-                "App-Token": appToken,
-            }
-        });
-
-        if (!sessionResponse.data.session_token) {
-            return { error: "Échec de récupération du token de session" };
+        if (!ticketId) {
+            return { error: "ID de ticket manquant" };
         }
 
-        headers = {
-            "Content-Type": "application/json",
-            "Session-Token": sessionResponse.data.session_token,
-            "App-Token": appToken,
-        };
-    } catch (error) {
-        return { error: "Erreur initSession: " + error.message };
-    }
+        const appToken = process.env.ITSM_APP_TOKEN;
+        const ticketUsersUrl = `${process.env.ITSM_HOST}${process.env.ITSM_URI}/apirest.php/Ticket/${ticketId}/Ticket_User`;
 
-    while (attempts < maxAttempts) {
+        const maxAttempts = 10000;
+        const interval = 10000;
+        let attempts = 0;
+
+        let headers = null;
         try {
-            const usersResponse = await axios.get(ticketUsersUrl, { headers });
-
-            if (usersResponse.status === 200 && Array.isArray(usersResponse.data)) {
-                const assignedTech = usersResponse.data.find(a => a.type === 2);
-
-                if (assignedTech) {
-                    console.log("Tech assigné trouvé:", assignedTech.users_id);
-                    context.item.data.assignedTechId = assignedTech.users_id;
-                    return { success: true, assignedTechId: assignedTech.users_id };
+            const sessionResponse = await axios.get(`${process.env.ITSM_HOST}${process.env.ITSM_URI}/apirest.php/initSession`, {
+                headers: {
+                    "Content-Type": "application/json",
+                    "Authorization": "user_token " + process.env.ITSM_USER_TOKEN,
+                    "App-Token": appToken,
                 }
+            });
+
+            if (!sessionResponse.data.session_token) {
+                return { error: "Échec de récupération du token de session" };
             }
+
+            headers = {
+                "Content-Type": "application/json",
+                "Session-Token": sessionResponse.data.session_token,
+                "App-Token": appToken,
+            };
         } catch (error) {
-            // Si erreur 401, renouveler la session
-            if (error.response && error.response.status === 401) {
-                console.log("Session expirée, renouvellement...");
-                try {
-                    const sessionResponse = await axios.get(`${process.env.ITSM_HOST}${process.env.ITSM_URI}/apirest.php/initSession`, {
-                        headers: {
-                            "Content-Type": "application/json",
-                            "Authorization": "user_token " + process.env.ITSM_USER_TOKEN,
-                            "App-Token": appToken,
-                        }
-                    });
-                    headers["Session-Token"] = sessionResponse.data.session_token;
-                } catch (renewError) {
-                    console.error("Erreur renouvellement session:", renewError.message);
+            return { error: "Erreur initSession: " + error.message };
+        }
+
+        while (attempts < maxAttempts) {
+            try {
+                const usersResponse = await axios.get(ticketUsersUrl, { headers });
+
+                if (usersResponse.status === 200 && Array.isArray(usersResponse.data)) {
+                    const assignedTech = usersResponse.data.find(a => a.type === 2);
+
+                    if (assignedTech) {
+                        console.log("Tech assigné trouvé:", assignedTech.users_id);
+                        context.item.data.assignedTechId = assignedTech.users_id;
+                        return { success: true, assignedTechId: assignedTech.users_id };
+                    }
                 }
-            } else {
-                console.error("Erreur pollAssignment:", error.message);
+            } catch (error) {
+                if (error.response && error.response.status === 401) {
+                    console.log("Session expirée, renouvellement...");
+                    try {
+                        const sessionResponse = await axios.get(`${process.env.ITSM_HOST}${process.env.ITSM_URI}/apirest.php/initSession`, {
+                            headers: {
+                                "Content-Type": "application/json",
+                                "Authorization": "user_token " + process.env.ITSM_USER_TOKEN,
+                                "App-Token": appToken,
+                            }
+                        });
+                        headers["Session-Token"] = sessionResponse.data.session_token;
+                    } catch (renewError) {
+                        console.error("Erreur renouvellement session:", renewError.message);
+                    }
+                } else {
+                    console.error("Erreur pollAssignment:", error.message);
+                }
             }
+
+            attempts++;
+            await new Promise(resolve => setTimeout(resolve, interval));
         }
 
-        attempts++;
-        console.log(`pollAssignment: tentative ${attempts}, pas encore assigné...`);
-        await new Promise(resolve => setTimeout(resolve, interval));
+        return { error: "Timeout: aucun tech assigné", success: false };
     }
-
-    return { error: "Timeout: aucun tech assigné", success: false };
-        }
-
 
     async pollTaskCompletion(input, context) {
         const taskId = input.taskId || context.item.data.lastTaskId;
@@ -792,11 +766,86 @@ class AppServices {
             }
 
             attempts++;
-            console.log(`pollTaskCompletion: tentative ${attempts}, tâche pas encore terminée...`);
             await new Promise(resolve => setTimeout(resolve, interval));
         }
 
         return { error: "Timeout: tâche non terminée", success: false };
+    }
+
+    async assignItemToUser(input, context) {
+        const taskId = context.item.data.lastTaskId;
+        const matricule = input.matricule || context.item.data.matricule;
+
+        if (!taskId || !matricule) {
+            return { error: "taskId ou matricule manquant" };
+        }
+
+        const appToken = process.env.ITSM_APP_TOKEN;
+
+        try {
+            const sessionResponse = await axios.get(`${process.env.ITSM_HOST}${process.env.ITSM_URI}/apirest.php/initSession`, {
+                headers: {
+                    "Content-Type": "application/json",
+                    "Authorization": "user_token " + process.env.ITSM_USER_TOKEN,
+                    "App-Token": appToken,
+                }
+            });
+
+            const sessionToken = sessionResponse.data.session_token;
+            const headers = {
+                "Content-Type": "application/json",
+                "Session-Token": sessionToken,
+                "App-Token": appToken,
+            };
+
+            await axios.post(`${process.env.ITSM_HOST}${process.env.ITSM_URI}/apirest.php/changeActiveProfile/`,
+                { profiles_id: 4 }, { headers });
+
+            const ticketId = context.item.data.ticketId;
+            const itemTicketResponse = await axios.get(
+                `${process.env.ITSM_HOST}${process.env.ITSM_URI}/apirest.php/Ticket/${ticketId}/Item_Ticket`,
+                { headers }
+            );
+            if (!itemTicketResponse.data || !Array.isArray(itemTicketResponse.data) || itemTicketResponse.data.length === 0) {
+                console.log("Aucun item associé au ticket");
+                return { success: false, error: "Aucun item associé" };
+            }
+            const itemId   = itemTicketResponse.data[0].items_id;
+            const itemType = itemTicketResponse.data[0].itemtype;
+            console.log(`Item trouvé: ${itemType} id=${itemId}`);
+
+            const userResponse = await axios.get(
+                `${process.env.ITSM_HOST}${process.env.ITSM_URI}/apirest.php/User`,
+                { headers, params: { "searchText[name]": matricule, "range": "0-1" } }
+            );
+
+            if (!userResponse.data || userResponse.data.length === 0) {
+                console.error(`Utilisateur non trouvé pour matricule: ${matricule}`);
+                return { success: false, error: "Utilisateur non trouvé" };
+            }
+
+            const userId = userResponse.data[0].id;
+            console.log(`Utilisateur trouvé: ${userId} pour matricule ${matricule}`);
+
+            await axios.put(
+                `${process.env.ITSM_HOST}${process.env.ITSM_URI}/apirest.php/${itemType}/${itemId}`,
+                {
+                    input: {
+                        users_id: userId,
+                        ...(input.states_id && { states_id: input.states_id }),
+                        ...(context.item.data.resolvedLocationId && { locations_id: context.item.data.resolvedLocationId })
+                    }
+                },
+                { headers }
+            );
+
+            console.log(`${itemType} ${itemId} attribué à l'utilisateur ${userId}`);
+            return { success: true, itemId, itemType, userId };
+
+        } catch (error) {
+            console.error("Erreur assignItemToUser:", error.message);
+            return { error: error.message };
+        }
     }
 
     async updateTicket(input, context) {
@@ -804,7 +853,6 @@ class AppServices {
             const ticketId = input.ticketUpdate.id;
             const appToken = process.env.ITSM_APP_TOKEN;
 
-            // Obtenir un jeton de session
             const sessionResponse = await axios.get(`${process.env.ITSM_HOST}${process.env.ITSM_URI}/apirest.php/initSession`, {
                 headers: {
                     "Content-Type": "application/json",
@@ -828,7 +876,6 @@ class AppServices {
                 "Pragma": "no-cache"
             };
 
-            // Passer en profil superadmin
             try {
                 const changeProfileUrl = `${process.env.ITSM_HOST}${process.env.ITSM_URI}/apirest.php/changeActiveProfile/`;
                 await axios.post(changeProfileUrl, { profiles_id: 4 }, { headers });
@@ -836,48 +883,40 @@ class AppServices {
                 console.error("Erreur lors du changement de profil");
             }
 
-            // Récupérer les assignations existantes
             const ticketUsersUrl = `${process.env.ITSM_HOST}${process.env.ITSM_URI}/apirest.php/Ticket/${ticketId}/Ticket_User`;
             const existingAssignments = await axios.get(ticketUsersUrl, { headers });
 
-            // Récupérer les assignations de groupes existantes
             const ticketGroupsUrl = `${process.env.ITSM_HOST}${process.env.ITSM_URI}/apirest.php/Ticket/${ticketId}/Group_Ticket`;
             const existingGroupAssignments = await axios.get(ticketGroupsUrl, { headers });
 
-            // Stocker l'ID de l'utilisateur ou groupe actuel
             const currentUserId = input.ticketUpdate.users_id_assign;
             const currentGroupId = input.ticketUpdate.groups_id_assign;
 
-            // Traiter les assignations utilisateur existantes
             if (existingAssignments.data && Array.isArray(existingAssignments.data)) {
                 const assignmentsToRemove = existingAssignments.data.filter(assignment =>
                     assignment.type === 2 && assignment.users_id != currentUserId
                 );
 
                 for (const assignment of assignmentsToRemove) {
-                    // Supprimer l'assignation
                     try {
                         const deleteUrl = `${process.env.ITSM_HOST}${process.env.ITSM_URI}/apirest.php/Ticket_User/`;
                         const deletePayload = {
                             input: { id: assignment.id },
                             force_purge: true
                         };
-
                         await axios.delete(deleteUrl, { headers, data: deletePayload });
                     } catch (deleteError) {
                         console.error("Erreur lors de la suppression d'assignation");
                     }
 
-                    // Ajouter comme observateur
                     try {
                         const observerPayload = {
                             input: {
                                 tickets_id: ticketId,
                                 users_id: assignment.users_id,
-                                type: 3 // Observateur
+                                type: 3
                             }
                         };
-
                         const observerUrl = `${process.env.ITSM_HOST}${process.env.ITSM_URI}/apirest.php/Ticket_User/`;
                         await axios.post(observerUrl, observerPayload, { headers });
                     } catch (observerError) {
@@ -885,6 +924,7 @@ class AppServices {
                     }
                 }
             }
+
             if (existingGroupAssignments.data && Array.isArray(existingGroupAssignments.data)) {
                 const groupAssignmentsToRemove = existingGroupAssignments.data.filter(assignment =>
                     assignment.type === 2 && assignment.groups_id != currentGroupId
@@ -897,7 +937,6 @@ class AppServices {
                             input: { id: assignment.id },
                             force_purge: true
                         };
-
                         await axios.delete(deleteUrl, { headers, data: deletePayload });
                     } catch (deleteError) {
                         console.error("Erreur lors de la suppression d'assignation groupe");
@@ -905,7 +944,6 @@ class AppServices {
                 }
             }
 
-            // Assigner le groupe si nécessaire
             if (currentGroupId) {
                 const isGroupAlreadyAssigned = existingGroupAssignments.data && Array.isArray(existingGroupAssignments.data) ?
                     existingGroupAssignments.data.some(a => a.groups_id == currentGroupId && a.type === 2) : false;
@@ -926,7 +964,7 @@ class AppServices {
                     }
                 }
             }
-            // Assigner le nouvel utilisateur si nécessaire
+
             if (currentUserId) {
                 const isAlreadyAssigned = existingAssignments.data && Array.isArray(existingAssignments.data) ?
                     existingAssignments.data.some(a => a.users_id == currentUserId && a.type === 2) : false;
@@ -937,10 +975,9 @@ class AppServices {
                             input: {
                                 tickets_id: ticketId,
                                 users_id: currentUserId,
-                                type: 2 // Assigné
+                                type: 2
                             }
                         };
-
                         const assignUrl = `${process.env.ITSM_HOST}${process.env.ITSM_URI}/apirest.php/Ticket_User/`;
                         await axios.post(assignUrl, assignPayload, { headers });
                     } catch (assignError) {
@@ -949,7 +986,6 @@ class AppServices {
                 }
             }
 
-            // Ajouter l'observateur si spécifié
             if (input.ticketUpdate.users_id_observer) {
                 const existingObservers = existingAssignments.data && Array.isArray(existingAssignments.data) ?
                     existingAssignments.data.filter(a => a.users_id == input.ticketUpdate.users_id_observer && a.type === 3) : [];
@@ -960,10 +996,9 @@ class AppServices {
                             input: {
                                 tickets_id: ticketId,
                                 users_id: input.ticketUpdate.users_id_observer,
-                                type: 3 // Observateur
+                                type: 3
                             }
                         };
-
                         const observerUrl = `${process.env.ITSM_HOST}${process.env.ITSM_URI}/apirest.php/Ticket_User/`;
                         await axios.post(observerUrl, observerPayload, { headers });
                     } catch (observerError) {
@@ -972,17 +1007,13 @@ class AppServices {
                 }
             }
 
-            // Ajouter une validation si nécessaire
             if (input.ticketValidation) {
                 const validationUrl = `${process.env.ITSM_HOST}${process.env.ITSM_URI}/apirest.php/TicketValidation/`;
                 const validationInput = input.ticketValidation.input;
 
-                // Si un groupe est assigné au ticket ET qu'aucun utilisateur individuel n'est assigné,
-                // récupérer tous les membres et créer une validation pour chacun
                 if (currentGroupId && !currentUserId) {
                     console.log(`Groupe assigné: ${currentGroupId}. Récupération des membres pour validation...`);
 
-                    // Récupération des membres du groupe via l'API GLPI
                     let groupMembers = [];
                     try {
                         const groupUsersUrl = `${process.env.ITSM_HOST}${process.env.ITSM_URI}/apirest.php/Group/${currentGroupId}/Group_User/`;
@@ -1001,7 +1032,6 @@ class AppServices {
                     if (groupMembers.length > 0) {
                         console.log(`Création de ${groupMembers.length} demandes de validation pour les membres du groupe`);
 
-                        // Créer une demande de validation pour chaque membre du groupe
                         for (const userId of groupMembers) {
                             const validationPayload = {
                                 input: {
@@ -1023,31 +1053,29 @@ class AppServices {
                         console.log("Aucun membre trouvé dans le groupe, pas de validation créée");
                     }
                 } else {
-                         // Validation par le tech assigné dynamiquement
-                         const assignedTech = existingAssignments.data && Array.isArray(existingAssignments.data)
-                                ? existingAssignments.data.find(a => a.type === 2)
-                                : null;
-                        if (assignedTech) {
-                                try {
-                                        const validationPayload = {
-                                                input: {
-                                                        tickets_id: ticketId,
-                                                        users_id_validate: assignedTech.users_id,
-                                                        comment_submission: validationInput.comment_submission,
-                                                }
-                                        };
-                                        await axios.post(validationUrl, validationPayload, { headers });
-                                        console.log("Validation créée pour le tech:", assignedTech.users_id);
-                                } catch (validationError) {
-                                        console.error("Erreur lors de l'ajout de validation:", validationError.message);
+                    const assignedTech = existingAssignments.data && Array.isArray(existingAssignments.data)
+                        ? existingAssignments.data.find(a => a.type === 2)
+                        : null;
+                    if (assignedTech) {
+                        try {
+                            const validationPayload = {
+                                input: {
+                                    tickets_id: ticketId,
+                                    users_id_validate: assignedTech.users_id,
+                                    comment_submission: validationInput.comment_submission,
                                 }
-                        } else {
-                                console.log("Aucun tech assigné, validation non créée");
+                            };
+                            await axios.post(validationUrl, validationPayload, { headers });
+                            console.log("Validation créée pour le tech:", assignedTech.users_id);
+                        } catch (validationError) {
+                            console.error("Erreur lors de l'ajout de validation:", validationError.message);
                         }
+                    } else {
+                        console.log("Aucun tech assigné, validation non créée");
+                    }
                 }
             }
 
-            // Résoudre email manager et mettre à jour le demandeur
             if (input.ticketUpdate.manager_email) {
                 try {
                     const userSearchUrl = `${process.env.ITSM_HOST}${process.env.ITSM_URI}/apirest.php/UserEmail`;
@@ -1057,8 +1085,8 @@ class AppServices {
                     });
                     if (userSearchResponse.data && userSearchResponse.data.length > 0) {
                         const managerId = userSearchResponse.data[0].users_id;
-                        const ticketUsersUrl = `${process.env.ITSM_HOST}${process.env.ITSM_URI}/apirest.php/Ticket/${ticketId}/Ticket_User`;
-                        const currentRequesters = await axios.get(ticketUsersUrl, { headers });
+                        const ticketUsersUrl2 = `${process.env.ITSM_HOST}${process.env.ITSM_URI}/apirest.php/Ticket/${ticketId}/Ticket_User`;
+                        const currentRequesters = await axios.get(ticketUsersUrl2, { headers });
                         if (currentRequesters.data && Array.isArray(currentRequesters.data)) {
                             for (const requester of currentRequesters.data.filter(u => u.type === 1)) {
                                 await axios.delete(`${process.env.ITSM_HOST}${process.env.ITSM_URI}/apirest.php/Ticket_User/`, {
@@ -1078,7 +1106,7 @@ class AppServices {
                     console.error("Erreur résolution manager:", requesterError.message);
                 }
             }
-            // Mettre à jour le statut si spécifié
+
             if (input.ticketUpdate.status) {
                 try {
                     await axios.put(`${process.env.ITSM_HOST}${process.env.ITSM_URI}/apirest.php/Ticket/${ticketId}`, {
@@ -1092,7 +1120,7 @@ class AppServices {
                     console.error("Erreur mise à jour statut:", statusError.message);
                 }
             }
-            // Stockage de l'ID du ticket pour les tâches suivantes
+
             if (context && context.item && context.item.data) {
                 context.item.data.ticketId = ticketId;
             }
@@ -1112,7 +1140,6 @@ class AppServices {
         const appToken = process.env.ITSM_APP_TOKEN;
 
         try {
-            // Créer une nouvelle session
             const sessionResponse = await axios.get(initSessionUrl, {
                 headers: {
                     "Content-Type": "application/json",
@@ -1134,7 +1161,6 @@ class AppServices {
                     "Pragma": "no-cache"
                 };
 
-                // Réinitialiser le profil
                 try {
                     const getActiveProfileUrl = `${process.env.ITSM_HOST}${process.env.ITSM_URI}/apirest.php/getActiveProfile/`;
                     const profileResponse = await axios.get(getActiveProfileUrl, { headers });
@@ -1147,7 +1173,6 @@ class AppServices {
                     console.error("Erreur lors du changement de profil");
                 }
 
-                // Tuer la session avec la méthode qui fonctionne
                 try {
                     const killSessionUrl = `${process.env.ITSM_HOST}${process.env.ITSM_URI}/apirest.php/killSession/`;
                     await axios.get(killSessionUrl, { headers });
@@ -1203,7 +1228,6 @@ class AppServices {
                     "Pragma": "no-cache"
                 };
 
-                // Passer en profil superadmin
                 const getActiveProfileUrl = `${process.env.ITSM_HOST}${process.env.ITSM_URI}/apirest.php/getActiveProfile/`;
                 const profileResponse = await axios.get(getActiveProfileUrl, { headers });
 
@@ -1212,7 +1236,6 @@ class AppServices {
                     await axios.post(changeProfileUrl, { profiles_id: 4 }, { headers });
                 }
 
-                // Clôture du ticket
                 const closedPayload = {
                     input: {
                         status: 6
@@ -1289,21 +1312,18 @@ class AppServices {
                     "Pragma": "no-cache"
                 };
 
-                // Récupérer les informations de l'utilisateur
                 const userResponse = await axios.get(userApiUrl, { headers });
 
                 if (userResponse.status === 200 && userResponse.data) {
                     const user = userResponse.data;
-                    console.log("DEBUG FULL USER OBJECT:", JSON.stringify(user)); // Log complet pour voir les champs disponibles
-                    // Utilisation de 'name' si firstname/realname sont vides (cas observé pour l'ID 6)
+                    console.log("DEBUG FULL USER OBJECT:", JSON.stringify(user));
                     const userName = `${user.firstname || ''} ${user.realname || ''}`.trim() || user.name || `Utilisateur ${userId}`;
 
                     console.log("Nom d'utilisateur récupéré:", userName);
 
-                    // Stocker le nom dans le contexte pour utilisation ultérieure
                     if (context && context.item && context.item.data) {
                         context.item.data[`userName_${userId}`] = userName;
-                        context.item.data['agentName'] = userName; // Stockage simplifié
+                        context.item.data['agentName'] = userName;
                         console.log(`DEBUG: userName_${userId} set to '${userName}'`);
                         console.log(`DEBUG: agentName set to '${userName}'`);
                     }
@@ -1352,7 +1372,6 @@ class AppServices {
             const response = await axios.get(groupUsersUrl, { headers });
 
             if (response.status === 200 && response.data) {
-                // Extraire les IDs des utilisateurs du groupe
                 const userIds = response.data
                     .filter(item => item.users_id)
                     .map(item => item.users_id);
@@ -1395,9 +1414,6 @@ class AppServices {
         return { logged: true };
     }
 
-    /**
-     * Récupère les métadonnées des questions FormCreator depuis l'API GLPI.
-     */
     static async fetchFormCreatorMetadata(formId: number, sessionToken: string, appToken: string): Promise<{
         questions: Record<string, { name: string; sectionId: number; sectionName: string; order: number; fieldtype: string; itemtype: string }>;
         sections: Record<number, { name: string; order: number }>;
@@ -1427,7 +1443,6 @@ class AppServices {
             const sectionIds = Object.keys(result.sections).map(Number);
             for (const question of allQuestions) {
                 if (sectionIds.includes(question.plugin_formcreator_sections_id)) {
-                    // Extraire l'itemtype depuis le champ values (JSON string) pour les dropdowns
                     let itemtype = question.itemtype || '';
                     if (!itemtype && question.values) {
                         try {
@@ -1436,7 +1451,7 @@ class AppServices {
                                 itemtype = parsedValues.itemtype;
                             }
                         } catch (e) {
-                            // values n'est pas un JSON valide (ex: tableau de valeurs radio)
+                            // values n'est pas un JSON valide
                         }
                     }
 
@@ -1458,9 +1473,6 @@ class AppServices {
         return result;
     }
 
-    /**
-     * Résout un ID en nom lisible via l'API GLPI.
-     */
     static async resolveGlpiItemName(itemtype: string, itemId: number, sessionToken: string, appToken: string): Promise<string> {
         if (!itemtype || !itemId || itemId === 0) return String(itemId);
 
@@ -1475,7 +1487,6 @@ class AppServices {
             const response = await axios.get(`${baseUrl}/${itemtype}/${itemId}`, { headers });
             if (response.status === 200 && response.data) {
                 const item = response.data;
-                // Selon le type d'objet, retourner le champ approprié
                 if (itemtype === 'User') {
                     return `${item.firstname || ''} ${item.realname || ''}`.trim() || item.name || String(itemId);
                 }
@@ -1487,10 +1498,6 @@ class AppServices {
         return String(itemId);
     }
 
-    /**
-     * Génère le contenu HTML formaté du formulaire avec sections et labels.
-     * Résout les IDs des dropdowns en noms lisibles.
-     */
     static async generateFormattedHtmlContent(
         data: any,
         metadata: {
@@ -1505,7 +1512,6 @@ class AppServices {
         const htmlParts: string[] = [];
         const sortedSections = Object.entries(metadata.sections).sort(([, a], [, b]) => a.order - b.order);
 
-        // Types de champs qui référencent des objets GLPI
         const dropdownFieldTypes = ['dropdown', 'glpiselect', 'dropdownfield'];
 
         for (const [sectionId, section] of sortedSections) {
@@ -1531,7 +1537,6 @@ class AppServices {
 
                 let formattedValue: string;
 
-                // Si c'est un dropdown avec un itemtype, résoudre l'ID en nom
                 if (dropdownFieldTypes.includes(question.fieldtype) && question.itemtype && !isNaN(Number(value))) {
                     formattedValue = await AppServices.resolveGlpiItemName(
                         question.itemtype,
@@ -1551,58 +1556,109 @@ class AppServices {
 
         return htmlParts.join('\n');
     }
-        async resolveUserByEmail(input, context) {
-                        const appToken = process.env.ITSM_APP_TOKEN;
-                        const email = input.email || context.item.data[input.emailField];
 
-                        if (!email) {
-                                console.error("resolveUserByEmail: aucun email fourni");
-                                return { error: "Email manquant" };
-                        }
+    async resolveUserByEmail(input, context) {
+        const appToken = process.env.ITSM_APP_TOKEN;
+        const email = input.email || context.item.data[input.emailField];
 
-                        try {
-                                const sessionResponse = await axios.get(`${process.env.ITSM_HOST}${process.env.ITSM_URI}/apirest.php/initSession`, {
-                                        headers: {
-                                                "Content-Type": "application/json",
-                                                "Authorization": "user_token " + process.env.ITSM_USER_TOKEN,
-                                                "App-Token": appToken,
-                                        }
-                                });
+        if (!email) {
+            console.error("resolveUserByEmail: aucun email fourni");
+            return { error: "Email manquant" };
+        }
 
-                                const sessionToken = sessionResponse.data.session_token;
-                                const headers = {
-                                        "Content-Type": "application/json",
-                                        "Session-Token": sessionToken,
-                                        "App-Token": appToken,
-                                };
-
-                                await axios.post(`${process.env.ITSM_HOST}${process.env.ITSM_URI}/apirest.php/changeActiveProfile/`,
-                                        { profiles_id: 4 }, { headers });
-
-                                const response = await axios.get(
-                                        `${process.env.ITSM_HOST}${process.env.ITSM_URI}/apirest.php/User`,
-                                        {
-                                                headers,
-                                                params: { "searchText[email]": email, "range": "0-1" }
-                                        }
-                                );
-
-                                if (!response.data || response.data.length === 0) {
-                                        console.error(`resolveUserByEmail: aucun utilisateur trouvé pour ${email}`);
-                                        return { error: "Utilisateur non trouvé", email };
-                                }
-
-                                const userId = response.data[0].id;
-                                const storeAs = input.storeAs || "resolvedUserId";
-                                context.item.data[storeAs] = userId;
-
-                                console.log(`resolveUserByEmail: ${email} → users_id ${userId} stocké dans data.${storeAs}`);
-                                return { success: true, userId, email };
-
-                        } catch (error) {
-                                console.error("resolveUserByEmail erreur:", error.message);
-                                return { error: error.message };
-                        }
+        try {
+            const sessionResponse = await axios.get(`${process.env.ITSM_HOST}${process.env.ITSM_URI}/apirest.php/initSession`, {
+                headers: {
+                    "Content-Type": "application/json",
+                    "Authorization": "user_token " + process.env.ITSM_USER_TOKEN,
+                    "App-Token": appToken,
                 }
+            });
+
+            const sessionToken = sessionResponse.data.session_token;
+            const headers = {
+                "Content-Type": "application/json",
+                "Session-Token": sessionToken,
+                "App-Token": appToken,
+            };
+
+            await axios.post(`${process.env.ITSM_HOST}${process.env.ITSM_URI}/apirest.php/changeActiveProfile/`,
+                { profiles_id: 4 }, { headers });
+
+            const response = await axios.get(
+                `${process.env.ITSM_HOST}${process.env.ITSM_URI}/apirest.php/User`,
+                {
+                    headers,
+                    params: { "searchText[email]": email, "range": "0-1" }
+                }
+            );
+
+            if (!response.data || response.data.length === 0) {
+                console.error(`resolveUserByEmail: aucun utilisateur trouvé pour ${email}`);
+                return { error: "Utilisateur non trouvé", email };
+            }
+
+            const userId = response.data[0].id;
+            const storeAs = input.storeAs || "resolvedUserId";
+            context.item.data[storeAs] = userId;
+
+            console.log(`resolveUserByEmail: ${email} → users_id ${userId} stocké dans data.${storeAs}`);
+            return { success: true, userId, email };
+
+        } catch (error) {
+            console.error("resolveUserByEmail erreur:", error.message);
+            return { error: error.message };
+        }
+    }
+
+    async resolveLocation(input, context) {
+        const locationName = input.locationName;
+
+        if (!locationName) {
+            return { error: "Nom de location manquant" };
+        }
+
+        const appToken = process.env.ITSM_APP_TOKEN;
+
+        try {
+            const sessionResponse = await axios.get(`${process.env.ITSM_HOST}${process.env.ITSM_URI}/apirest.php/initSession`, {
+                headers: {
+                    "Content-Type": "application/json",
+                    "Authorization": "user_token " + process.env.ITSM_USER_TOKEN,
+                    "App-Token": appToken,
+                }
+            });
+
+            const sessionToken = sessionResponse.data.session_token;
+            const headers = {
+                "Content-Type": "application/json",
+                "Session-Token": sessionToken,
+                "App-Token": appToken,
+            };
+
+            const response = await axios.get(
+                `${process.env.ITSM_HOST}${process.env.ITSM_URI}/apirest.php/Location`,
+                {
+                    headers,
+                    params: { "searchText[name]": locationName, "range": "0-10" }
+                }
+            );
+
+            if (response.data && response.data.length > 0) {
+                const locationId = response.data[0].id;
+                console.log(`Location résolue : "${locationName}" → id ${locationId}`);
+                context.item.data.resolvedLocationId = locationId;
+                return { success: true, locationId };
+            } else {
+                console.warn(`Aucune location trouvée pour : "${locationName}"`);
+                return { error: "Location non trouvée", locationName };
+            }
+
+        } catch (error) {
+            console.error("Erreur resolveLocation:", error.message);
+            return { error: error.message };
+        }
+    }
 }
+
 export { AppServices }
